@@ -2136,15 +2136,13 @@ def get_strategy_logs():
             if msg.startswith('tick price=') or msg.startswith('tick price '):
                 continue
             ts = rr.get('timestamp')
-            if ts is not None and hasattr(ts, 'isoformat'):
-                # naive timestamps from the DB are wall-clock in the server's
-                # TZ; ``to_utc_iso`` converts them to UTC ISO with a Z suffix
-                # so the frontend can render them in the user's locale.
+            if ts is not None:
                 from app.utils.timeutil import to_utc_iso
-                rr['timestamp'] = to_utc_iso(ts)
+                iso = to_utc_iso(ts)
+                rr['timestamp'] = iso if iso is not None else str(ts)
             out.append(rr)
-        logs = list(reversed(out))
-        return jsonify({'code': 1, 'msg': 'success', 'data': logs})
+        # Already ORDER BY id DESC — newest first for the UI log panel.
+        return jsonify({'code': 1, 'msg': 'success', 'data': out})
     except Exception as e:
         if PgUndefinedTable is not None and isinstance(e, PgUndefinedTable):
             return jsonify({'code': 1, 'msg': 'success', 'data': []})
