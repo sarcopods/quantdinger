@@ -9,6 +9,7 @@ from datetime import datetime
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
 from app.services.symbol_name import normalize_crypto_symbol
+from app.services.exchange_execution import coalesce_exchange_config_from_payload
 
 logger = get_logger(__name__)
 
