@@ -66,7 +66,15 @@ def _append_snapshot_error(errors: List[str], exc: Exception, *, context: str) -
     logger.warning("%s: %s", context, exc)
 
 
-def _parse_okx_positions(data: List[Dict[str, Any]], *, market_type: str) -> List[Dict[str, Any]]:
+def _parse_okx_positions(
+    data: List[Dict[str, Any]],
+    *,
+    market_type: str,
+    client: Any = None,
+) -> List[Dict[str, Any]]:
+    from app.services.grid.fill_units import okx_swap_position_base_size
+
+    okx_client = client if client is not None and hasattr(client, "get_instrument") else None
     out: List[Dict[str, Any]] = []
     for p in data or []:
         if not isinstance(p, dict):
@@ -92,11 +100,17 @@ def _parse_okx_positions(data: List[Dict[str, Any]], *, market_type: str) -> Lis
             entry = float(p.get("avgPx") or 0.0)
         except Exception:
             entry = 0.0
+        if str(market_type or "").strip().lower() == "swap" and okx_client is not None:
+            qty_base = okx_swap_position_base_size(p, client=okx_client)
+        else:
+            qty_base = abs(float(pos))
+        if qty_base <= 0:
+            continue
         out.append(
             {
                 "symbol": normalize_strategy_symbol(hb_sym) or hb_sym,
                 "side": side,
-                "size": abs(float(pos)),
+                "size": qty_base,
                 "entry_price": entry,
                 "market_type": market_type,
                 "inst_id": inst_id,
@@ -197,7 +211,7 @@ def _fetch_swap_positions_snapshot(client: Any, exchange_id: str, errors: List[s
         if isinstance(client, OkxClient):
             resp = client.get_positions(inst_type="SWAP") or {}
             data = (resp.get("data") or []) if isinstance(resp, dict) else []
-            return _parse_okx_positions(data, market_type="swap")
+            return _parse_okx_positions(data, market_type="swap", client=client)
         if isinstance(client, BinanceFuturesClient):
             rows = client.get_positions() or []
             if isinstance(rows, dict) and "raw" in rows:
@@ -425,7 +439,7 @@ def _fetch_okx_snapshot(
     try:
         resp = client.get_positions(inst_type="SWAP")
         data = (resp.get("data") or []) if isinstance(resp, dict) else []
-        swap_pos = _parse_okx_positions(data, market_type="swap")
+        swap_pos = _parse_okx_positions(data, market_type="swap", client=client)
     except Exception as e:
         _append_snapshot_error(errors, e, context="OKX 合约持仓")
     try:

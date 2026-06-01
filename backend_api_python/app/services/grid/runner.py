@@ -110,6 +110,18 @@ class GridRestingRunner:
             return False, "grid resting limit orders failed during startup"
         self._started = True
         register_runner(self)
+        try:
+            from app.services.grid.poller import sync_strategy_grid_orders
+
+            polled = sync_strategy_grid_orders(self.strategy_id)
+            if polled:
+                append_strategy_log(
+                    self.strategy_id,
+                    "info",
+                    f"Grid startup fill sync: polled {polled} resting order(s)",
+                )
+        except Exception as e:
+            logger.warning("grid startup fill sync sid=%s: %s", self.strategy_id, e)
         append_strategy_log(self.strategy_id, "info", f"Grid resting live started, placed {n} entry limits")
         return True, ""
 

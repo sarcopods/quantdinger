@@ -63,6 +63,26 @@ def _okx_ct_val(client: OkxClient, symbol: str, market_type: str) -> float:
         return 1.0
 
 
+def okx_swap_position_base_size(
+    pos: Dict[str, Any],
+    *,
+    client: Optional[OkxClient] = None,
+) -> float:
+    """Convert OKX SWAP ``pos`` field (contracts) to base-asset size."""
+    contracts = abs(_float(pos.get("pos")))
+    if contracts <= 0:
+        return 0.0
+    ct_val = _float(pos.get("ctVal"))
+    if ct_val <= 0 and client is not None:
+        inst_id = str(pos.get("instId") or "").strip()
+        sym = inst_id.replace("-SWAP", "").replace("-", "/") if inst_id else ""
+        if sym:
+            ct_val = _okx_ct_val(client, sym, "swap")
+    if ct_val <= 0:
+        return 0.0
+    return contracts * ct_val
+
+
 def _deepcoin_ct_val(client: DeepcoinClient, symbol: str) -> float:
     try:
         info = client.get_instrument_info(symbol=str(symbol)) or {}

@@ -402,6 +402,17 @@ class PendingOrderWorker:
             try:
                 sc = load_strategy_configs(int(sid))
                 exec_mode = (sc.get("execution_mode") or "").strip().lower()
+                bot_type = str(
+                    sc.get("bot_type")
+                    or (sc.get("trading_config") or {}).get("bot_type")
+                    or ""
+                ).strip().lower()
+                if bot_type == "grid":
+                    logger.debug(
+                        "[PositionSync] Strategy %s skipped: grid bot uses fill ledger (L3)",
+                        sid,
+                    )
+                    continue
                 # 修改：即使signal模式，如果指定了target_strategy_id（策略启动时调用），也要同步
                 # 这样可以清理用户在交易所手动平仓但数据库记录还在的"幽灵持仓"
                 if exec_mode != "live" and not target_strategy_id:

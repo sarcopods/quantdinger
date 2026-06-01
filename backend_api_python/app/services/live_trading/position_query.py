@@ -33,7 +33,10 @@ def symbols_equivalent(a: str, b: str) -> bool:
     return na.replace("/", "") == nb.replace("/", "")
 
 
-from app.services.live_trading.position_row_parse import position_base_qty_for_side
+from app.services.live_trading.position_row_parse import (
+    infer_position_side_from_row,
+    position_base_qty_for_side,
+)
 
 
 def query_exchange_position_size(
@@ -83,27 +86,19 @@ def query_exchange_position_size(
         return 0.0
 
     if isinstance(client, OkxClient):
+        from app.services.grid.fill_units import okx_swap_position_base_size
+
         inst_id = to_okx_swap_inst_id(sym)
         pos_resp = client.get_positions(inst_id=inst_id) or {}
         pos_data = (pos_resp.get("data") or []) if isinstance(pos_resp, dict) else []
-        ct_val_cache = 0.0
         for pos in pos_data:
             if not isinstance(pos, dict):
                 continue
             if str(pos.get("instId") or "").strip() != inst_id:
                 continue
-            try:
-                ct_val = float(pos.get("ctVal") or 0.0)
-            except (TypeError, ValueError):
-                ct_val = 0.0
-            if ct_val <= 0 and ct_val_cache <= 0:
-                try:
-                    inst = client.get_instrument(inst_type="SWAP", inst_id=inst_id) or {}
-                    ct_val_cache = float(inst.get("ctVal") or 0.0)
-                except Exception:
-                    ct_val_cache = 0.0
-            mult = ct_val if ct_val > 0 else (ct_val_cache if ct_val_cache > 0 else 1.0)
-            qty = position_base_qty_for_side(pos, side, contracts_to_base=mult)
+            if infer_position_side_from_row(pos) != side:
+                continue
+            qty = okx_swap_position_base_size(pos, client=client)
             if qty > 0:
                 return qty
         return 0.0

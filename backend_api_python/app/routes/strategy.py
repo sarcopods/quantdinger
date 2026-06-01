@@ -1019,105 +1019,28 @@ def get_positions():
             db.commit()
             cur.close()
 
-        account_legs: list = []
-        swap_account_legs: list = []
-        spot_account_legs: list = []
-        account_snapshot_fetched_at = 0
-        reconciliation_status = {"status": "skipped", "notes": []}
-        if execution_mode == "live":
-            try:
-                from app.services.live_trading.account_positions import (
-                    filter_legs_by_symbols,
-                    live_account_mirror_for_strategy,
-                    list_account_positions_for_strategy,
-                    reconcile_strategy_vs_account,
-                )
-                from app.services.live_trading.records import strategy_allowed_symbols
+        from app.services.live_trading.records import normalize_strategy_symbol, strategy_allowed_symbols
 
-                allowed = strategy_allowed_symbols(
-                    {
-                        "symbol": st.get("symbol"),
-                        "trading_config": trading_config,
-                    }
-                )
-                mirror = live_account_mirror_for_strategy(
-                    strategy_id=int(strategy_id),
-                    user_id=int(user_id),
-                    strategy_market_type=market_type,
-                    allowed_symbols=allowed,
-                )
-                account_legs = list(mirror.get("account_legs") or [])
-                swap_account_legs = list(mirror.get("swap_legs") or [])
-                spot_account_legs = list(mirror.get("spot_legs") or [])
-                account_snapshot_fetched_at = int(mirror.get("fetched_at") or 0)
-                reconcile_legs = list(mirror.get("reconcile_legs") or [])
-                if not account_legs:
-                    account_legs = list_account_positions_for_strategy(
-                        strategy_id=int(strategy_id),
-                        user_id=int(user_id),
-                        allowed_symbols=None,
-                    )
-                    if market_type == "spot":
-                        spot_account_legs = [
-                            leg for leg in account_legs if str(leg.get("market_type") or "") == "spot"
-                        ]
-                        reconcile_legs = spot_account_legs
-                    else:
-                        swap_account_legs = [
-                            leg
-                            for leg in account_legs
-                            if str(leg.get("market_type") or "swap") != "spot"
-                        ]
-                        reconcile_legs = filter_legs_by_symbols(swap_account_legs, allowed)
-                reconciliation_status = reconcile_strategy_vs_account(out, reconcile_legs)
-            except Exception as e:
-                logger.warning(
-                    "account reconciliation failed for strategy %s: %s", strategy_id, e
-                )
-
-        for leg in account_legs:
-            sym = str(leg.get("symbol") or "").strip()
-            if not sym:
-                continue
-            live_px = _fetch_symbol_price(sym)
-            if live_px > 0:
-                leg["mark_price"] = live_px
-
-        # Live strategies: when L3 ledger is empty but exchange has legs, surface account mirror
-        # so the UI is not blank while grid initial fills are still syncing.
-        if execution_mode == "live" and not out and account_legs:
-            for leg in account_legs:
-                sym = str(leg.get("symbol") or "").strip()
-                side = str(leg.get("side") or "").strip().lower()
-                try:
-                    size = float(leg.get("size") or 0.0)
-                except Exception:
-                    size = 0.0
-                if not sym or side not in ("long", "short") or size <= 1e-12:
-                    continue
-                entry = float(leg.get("entry_price") or 0.0)
-                cp = float(sym_to_price.get(sym) or leg.get("mark_price") or entry or 0.0)
-                pnl = calc_unrealized_pnl(side, entry, cp, size)
-                pct = calc_pnl_percent(entry, size, pnl, leverage=leverage, market_type=market_type)
-                notional = calc_notional_value(entry, size)
-                out.append(
-                    {
-                        "id": 0,
-                        "strategy_id": int(strategy_id),
-                        "symbol": sym,
-                        "side": side,
-                        "size": size,
-                        "entry_price": entry,
-                        "current_price": cp,
-                        "highest_price": entry,
-                        "unrealized_pnl": pnl,
-                        "pnl_percent": pct,
-                        "notional_value": notional,
-                        "margin_value": calc_margin_notional(notional, leverage, market_type),
-                        "updated_at": now,
-                        "source": "account_mirror",
-                    }
-                )
+        # Strategy positions come only from qd_strategy_positions (L3 ledger).
+        # Never substitute the credential-wide account mirror — that made the UI
+        # show the entire exchange wallet as "strategy holdings".
+        allowed = strategy_allowed_symbols(
+            {
+                "symbol": st.get("symbol"),
+                "trading_config": trading_config,
+            }
+        )
+        if allowed:
+            allowed_upper = {
+                normalize_strategy_symbol(str(s or "")).upper()
+                for s in allowed
+                if normalize_strategy_symbol(str(s or ""))
+            }
+            out = [
+                r
+                for r in out
+                if normalize_strategy_symbol(str(r.get("symbol") or "")).upper() in allowed_upper
+            ]
 
         return jsonify({
             'code': 1,
@@ -1125,11 +1048,6 @@ def get_positions():
             'data': {
                 'positions': out,
                 'items': out,
-                'account_legs': account_legs,
-                'swap_account_legs': swap_account_legs,
-                'spot_account_legs': spot_account_legs,
-                'account_snapshot_fetched_at': account_snapshot_fetched_at,
-                'reconciliation_status': reconciliation_status,
             },
         })
     except Exception as e:
