@@ -23,6 +23,7 @@ import numpy as np
 
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
+from app.services.indicator_workspace import is_indicator_ide_listable, resolve_indicator_asset_type
 from app.utils.auth import login_required
 from app.services.indicator_params import IndicatorParamsParser
 from app.services.indicator_translator import (
@@ -488,6 +489,7 @@ def get_indicators():
             # Best-effort schema upgrade for VIP-free indicators
             try:
                 cur.execute("ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS vip_free BOOLEAN DEFAULT FALSE")
+                cur.execute("ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS asset_type VARCHAR(32) DEFAULT 'indicator'")
             except Exception:
                 pass
             # Get user's own indicators (both purchased and custom).
@@ -496,6 +498,7 @@ def get_indicators():
                 SELECT
                   id, user_id, is_buy, end_time, name, code, description,
                   publish_to_community, pricing_type, price, is_encrypted, preview_image, vip_free,
+                  COALESCE(asset_type, 'indicator') as asset_type,
                   createtime, updatetime, created_at, updated_at
                 FROM qd_indicator_codes
                 WHERE user_id = ?
@@ -506,6 +509,13 @@ def get_indicators():
             rows = cur.fetchall() or []
             cur.close()
 
+        rows = [
+            r for r in rows
+            if is_indicator_ide_listable(
+                code=r.get("code") or "",
+                asset_type=r.get("asset_type") or "indicator",
+            )
+        ]
         out = [_row_to_indicator(r, user_id) for r in rows]
         return jsonify({"code": 1, "msg": "success", "data": out})
     except Exception as e:
@@ -546,6 +556,8 @@ def save_indicator():
         asset_type = (data.get("assetType") or data.get("asset_type") or "indicator").strip() or "indicator"
         if asset_type not in ("indicator", "script_template", "bot_preset"):
             asset_type = "indicator"
+
+        asset_type = resolve_indicator_asset_type(code, asset_type)
 
         if not code or not str(code).strip():
             return jsonify({"code": 0, "msg": "code is required", "data": None}), 400
